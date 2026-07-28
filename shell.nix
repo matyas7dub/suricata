@@ -1,11 +1,10 @@
 let
   pkgs = import <nixpkgs> {};
-
-in with pkgs;
+in
   pkgs.mkShell {
     name = "suri-shell";
 
-    buildInputs = [
+    buildInputs = with pkgs; [
       bash
       cargo
       rustc
@@ -37,6 +36,8 @@ in with pkgs;
       vectorscan
       zlib
       sphinx
+      numactl
+      dpdk
     ];
 
     # the following is needed to be able to build ebpf files
@@ -54,4 +55,4 @@ in with pkgs;
     #shellHook = ''
     #    cargo install cbindgen
     #'';
-}
+  }
