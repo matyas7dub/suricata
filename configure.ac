@@ -1467,6 +1467,21 @@
         fi
     ])
 
+   # Pattern Match Offload support
+    AC_ARG_ENABLE(pm-offload,
+            AS_HELP_STRING([--enable-pm-offload], [Enable pattern match offload support [default=no]]),
+                        [enable_pm_offload=$enableval],[enable_pm_offload=no])
+    AS_IF([test "x$enable_pm_offload" = "xyes"], [
+        if test "x$enable_dpdk" != "xyes"; then
+            echo
+            echo "   ERROR! Pattern Match Offload requires DPDK support."
+            echo "   Please reconfigure with --enable-dpdk"
+            echo
+            exit 1
+        fi
+        AC_DEFINE([PM_OFFLOAD],[1],(Pattern Match Offload support enabled))
+    ])
+
   # Netmap support
     AC_ARG_ENABLE(netmap,
             AS_HELP_STRING([--enable-netmap], [Enable Netmap support]),[enable_netmap=$enableval],[enable_netmap=no])
@@ -2643,6 +2658,7 @@ SURICATA_BUILD_CONF="Suricata Configuration:
 
   Plugin support (experimental):           ${plugin_support}
   DPDK Bond PMD:                           ${enable_dpdk_bond_pmd}
+  Pattern Match Offload:                   ${enable_pm_offload}
 
 Plugins:
   nDPI:                                    ${enable_ndpi}
