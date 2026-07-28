@@ -182,6 +182,12 @@ typedef struct SCInstance_ {
 
     const char *capture_plugin_name;
     const char *capture_plugin_args;
+
+#ifdef PM_OFFLOAD
+    uint64_t hdr_vld_mask;
+    uint16_t hdr_offset;
+    uint16_t hdr_len;
+#endif
 } SCInstance;
 
 

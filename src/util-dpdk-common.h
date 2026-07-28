@@ -39,6 +39,7 @@
 #include <rte_flow.h>
 #include <rte_kvargs.h>
 #include <rte_version.h>
+#include <rte_mbuf_dyn.h>
 
 #if RTE_VERSION < RTE_VERSION_NUM(22, 0, 0, 0)
 #define RTE_ETH_MQ_RX_RSS ETH_MQ_RX_RSS

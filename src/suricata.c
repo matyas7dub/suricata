@@ -1200,6 +1200,31 @@ static void SCInstanceInit(SCInstance *suri, const char *progname)
 #else
     g_detect_disabled = suri->disabled_detect = 0;
 #endif
+
+#ifdef PM_OFFLOAD
+    rte_errno = 0;
+    struct rte_mbuf_dynflag dynflag_params;
+    int ret = rte_mbuf_dynflag_lookup("rte_net_nfb_dynflag_header_vld", &dynflag_params);
+    if (ret < 0)
+        rte_exit(EXIT_FAILURE, "ERROR: rte_net_nfb_dynflag_header_vld not supported: %s\n",
+                strerror(rte_errno != 0 ? rte_errno : -ret));
+    suri->hdr_vld_mask = 1ULL << (uint16_t)ret;
+
+    rte_errno = 0;
+    struct rte_mbuf_dynfield dynfield_params;
+    ret = rte_mbuf_dynfield_lookup("rte_net_nfb_dynfield_header_len", &dynfield_params);
+    if (ret < 0)
+        rte_exit(EXIT_FAILURE, "ERROR: rte_net_nfb_dynfield_header_len not supported: %s\n",
+                strerror(rte_errno != 0 ? rte_errno : -ret));
+    suri->hdr_len = (uint16_t)ret;
+
+    rte_errno = 0;
+    ret = rte_mbuf_dynfield_lookup("rte_net_nfb_dynfield_header_offset", &dynfield_params);
+    if (ret < 0)
+        rte_exit(EXIT_FAILURE, "ERROR: rte_net_nfb_dynfield_header_offset not supported: %s\n",
+                strerror(rte_errno != 0 ? rte_errno : -ret));
+    suri->hdr_offset = (uint16_t)ret;
+#endif
 }
 
 const char *GetDocURL(void)
