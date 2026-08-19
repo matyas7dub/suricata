@@ -194,10 +194,13 @@ typedef struct PcapLogData_ {
 typedef struct PcapLogThreadData_ {
     PcapLogData *pcap_log;
     MemBuffer *buf;
+    MemBuffer *output_buf;
     StatsCounterId counter_written; /**< Counter for number of packets written */
     StatsCounterId
             counter_filtered_bpf; /**< Counter for number of packets filtered out and not writen */
 } PcapLogThreadData;
+
+static const PmDummyData pm_dummy_data = { 0 };
 
 /* Pattern for extracting timestamp from pcap log files. */
 static const char timestamp_pattern[] = ".*?(\\d+)(\\.(\\d+))?";
@@ -500,12 +503,63 @@ static void PcapLogUnlock(PcapLogData *pl)
     }
 }
 
-static inline int PcapWrite(
-        ThreadVars *tv, PcapLogThreadData *td, const uint8_t *data, const size_t len)
+static int PcapLogBufferWrite(MemBuffer **buffer_ptr, const uint8_t *data, const size_t len)
+{
+    MemBuffer *buffer = *buffer_ptr;
+    if (len > UINT32_MAX - buffer->offset) {
+        return -1;
+    }
+
+    const uint32_t required = buffer->offset + (uint32_t)len;
+    if (required >= buffer->size) {
+        const uint32_t expand_by = required - buffer->size + 1;
+        if (MemBufferExpand(buffer_ptr, expand_by) < 0) {
+            return -1;
+        }
+        buffer = *buffer_ptr;
+    }
+
+    memcpy(buffer->buffer + buffer->offset, data, len);
+    buffer->offset = required;
+    buffer->buffer[buffer->offset] = '\0';
+    return 0;
+}
+
+static int PcapLogPrepareOutput(PcapLogThreadData *td, const Packet *p, const uint8_t *data,
+        const size_t data_len, const uint8_t **output, size_t *output_len)
+{
+    PmDummyData dummy_data = pm_dummy_data;
+    const size_t max_signatures = sizeof(dummy_data.data) / sizeof(dummy_data.data[0]);
+    const size_t signature_count = MIN((size_t)p->alerts.cnt, max_signatures);
+
+    dummy_data.count = (uint8_t)signature_count;
+    dummy_data.overflow = p->alerts.cnt > max_signatures;
+    for (size_t i = 0; i < signature_count; i++) {
+        const PacketAlert *alert = &p->alerts.alerts[i];
+        dummy_data.data[i].id = (uint16_t)alert->s->id;
+        dummy_data.data[i].group = (uint8_t)alert->s->gid;
+    }
+
+    MemBufferReset(td->output_buf);
+    if (PcapLogBufferWrite(&td->output_buf, data, data_len) < 0 ||
+            PcapLogBufferWrite(&td->output_buf, (const uint8_t *)&dummy_data,
+                    sizeof(dummy_data)) < 0) {
+        return -1;
+    }
+
+    *output = td->output_buf->buffer;
+    *output_len = td->output_buf->offset;
+    return 0;
+}
+
+static inline int PcapWrite(ThreadVars *tv, PcapLogThreadData *td, const Packet *p,
+        const uint8_t *data, const size_t data_len)
 {
     struct timeval current_dump;
     gettimeofday(&current_dump, NULL);
     PcapLogData *pl = td->pcap_log;
+    const uint8_t *output = NULL;
+    size_t output_len = 0;
 
     if (pl->bpfp) {
         if (pcap_offline_filter(pl->bpfp, pl->h, data) == 0) {
@@ -515,11 +569,20 @@ static inline int PcapWrite(
         }
     }
 
+    if (PcapLogPrepareOutput(td, p, data, data_len, &output, &output_len) < 0) {
+        SCLogError("Failed to prepare packet data for PCAP output");
+        return TM_ECODE_FAILED;
+    }
+
+    pl->h->caplen = output_len;
+    pl->h->len = output_len;
+    const size_t record_len = PCAP_PKTHDR_SIZE + output_len;
+
     StatsCounterIncr(&tv->stats, td->counter_written);
 
-    pcap_dump((u_char *)pl->pcap_dumper, pl->h, data);
+    pcap_dump((u_char *)pl->pcap_dumper, pl->h, output);
     if (pl->compression.format == PCAP_LOG_COMPRESSION_FORMAT_NONE) {
-        pl->size_current += len;
+        pl->size_current += record_len;
     }
 #ifdef HAVE_LIBLZ4
     else if (pl->compression.format == PCAP_LOG_COMPRESSION_FORMAT_LZ4) {
@@ -532,8 +595,8 @@ static inline int PcapWrite(
         }
         uint64_t out_size = LZ4F_compressUpdate(comp->lz4f_context, comp->buffer, comp->buffer_size,
                 comp->pcap_buf, (uint64_t)in_size, NULL);
-        if (LZ4F_isError(len)) {
-            SCLogError("LZ4F_compressUpdate: %s", LZ4F_getErrorName(len));
+        if (LZ4F_isError(out_size)) {
+            SCLogError("LZ4F_compressUpdate: %s", LZ4F_getErrorName(out_size));
             return TM_ECODE_FAILED;
         }
         if (fseek(comp->pcap_buf_wrapper, 0, SEEK_SET) != 0) {
@@ -546,9 +609,9 @@ static inline int PcapWrite(
         }
         if (out_size > 0) {
             pl->size_current += out_size;
-            comp->bytes_in_block = len;
+            comp->bytes_in_block = record_len;
         } else {
-            comp->bytes_in_block += len;
+            comp->bytes_in_block += record_len;
         }
     }
 #endif /* HAVE_LIBLZ4 */
@@ -581,7 +644,8 @@ static int PcapLogSegmentCallback(
                 pctx->td->buf, seg->pcap_hdr_storage->pkt_hdr, seg->pcap_hdr_storage->pktlen);
         MemBufferWriteRaw(pctx->td->buf, buf, buflen);
 
-        PcapWrite(pctx->tv, pctx->td, (uint8_t *)pctx->td->buf->buffer, pctx->td->pcap_log->h->len);
+        PcapWrite(pctx->tv, pctx->td, p, (uint8_t *)pctx->td->buf->buffer,
+                pctx->td->pcap_log->h->len);
     }
     return 1;
 }
@@ -607,7 +671,8 @@ static void PcapLogDumpSegments(ThreadVars *tv, PcapLogThreadData *td, const Pac
  */
 static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
 {
-    size_t len;
+    size_t data_len;
+    size_t record_len;
     int ret = 0;
     Packet *rp = NULL;
 
@@ -628,12 +693,13 @@ static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
         rp = p->root;
         pl->h->caplen = GET_PKT_LEN(rp);
         pl->h->len = GET_PKT_LEN(rp);
-        len = PCAP_PKTHDR_SIZE + GET_PKT_LEN(rp);
+        data_len = GET_PKT_LEN(rp);
     } else {
         pl->h->caplen = GET_PKT_LEN(p);
         pl->h->len = GET_PKT_LEN(p);
-        len = PCAP_PKTHDR_SIZE + GET_PKT_LEN(p);
+        data_len = GET_PKT_LEN(p);
     }
+    record_len = PCAP_PKTHDR_SIZE + data_len + sizeof(PmDummyData);
 
     if (pl->filename == NULL) {
         ret = PcapLogOpenFileCtx(pl);
@@ -646,7 +712,7 @@ static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
 
     PcapLogCompressionData *comp = &pl->compression;
     if (comp->format == PCAP_LOG_COMPRESSION_FORMAT_NONE) {
-        if ((pl->size_current + len) > pl->size_limit) {
+        if ((pl->size_current + record_len) > pl->size_limit) {
             if (PcapLogRotateFile(tv, pl) < 0) {
                 PcapLogUnlock(pl);
                 SCLogDebug("rotation of pcap failed");
@@ -662,7 +728,7 @@ static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
          * bytes that have been fed into lz4 since the last write, and
          * act as if they would be written uncompressed. */
 
-        if ((pl->size_current + comp->bytes_in_block + len) > pl->size_limit) {
+        if ((pl->size_current + comp->bytes_in_block + record_len) > pl->size_limit) {
             if (PcapLogRotateFile(tv, pl) < 0) {
                 PcapLogUnlock(pl);
                 SCLogDebug("rotation of pcap failed");
@@ -702,20 +768,21 @@ static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
                 rp = p->root;
                 pl->h->caplen = GET_PKT_LEN(rp);
                 pl->h->len = GET_PKT_LEN(rp);
-                len = PCAP_PKTHDR_SIZE + GET_PKT_LEN(rp);
+                data_len = GET_PKT_LEN(rp);
             } else {
                 pl->h->caplen = GET_PKT_LEN(p);
                 pl->h->len = GET_PKT_LEN(p);
-                len = PCAP_PKTHDR_SIZE + GET_PKT_LEN(p);
+                data_len = GET_PKT_LEN(p);
             }
+            record_len = PCAP_PKTHDR_SIZE + data_len + sizeof(PmDummyData);
         }
     }
 
     if (PacketIsTunnelChild(p)) {
         rp = p->root;
-        ret = PcapWrite(tv, td, GET_PKT_DATA(rp), len);
+        ret = PcapWrite(tv, td, p, GET_PKT_DATA(rp), data_len);
     } else {
-        ret = PcapWrite(tv, td, GET_PKT_DATA(p), len);
+        ret = PcapWrite(tv, td, p, GET_PKT_DATA(p), data_len);
     }
     if (ret != TM_ECODE_OK) {
         PCAPLOG_PROFILE_END(pl->profile_write);
@@ -724,7 +791,7 @@ static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
     }
 
     PCAPLOG_PROFILE_END(pl->profile_write);
-    pl->profile_data_size += len;
+    pl->profile_data_size += record_len;
 
     SCLogDebug("pl->size_current %"PRIu64",  pl->size_limit %"PRIu64,
                pl->size_current, pl->size_limit);
@@ -1103,13 +1170,21 @@ static TmEcode PcapLogDataInit(ThreadVars *t, const void *initdata, void **data)
     pl->threads++;
     SCMutexUnlock(&pl->plog_lock);
 
-    *data = (void *)td;
-
     if (IsTcpSessionDumpingEnabled()) {
         td->buf = MemBufferCreateNew(PCAP_OUTPUT_BUFFER_SIZE);
     } else {
         td->buf = NULL;
     }
+    td->output_buf = MemBufferCreateNew(PCAP_OUTPUT_BUFFER_SIZE);
+    if (td->output_buf == NULL) {
+        if (td->buf != NULL) {
+            MemBufferFree(td->buf);
+        }
+        SCFree(td);
+        return TM_ECODE_FAILED;
+    }
+
+    *data = (void *)td;
 
     if (pl->max_files && (pl->mode == LOGMODE_MULTI || pl->threads == 1)) {
 #ifdef INIT_RING_BUFFER
@@ -1246,6 +1321,8 @@ static TmEcode PcapLogDataDeinit(ThreadVars *t, void *thread_data)
 
     if (td->buf)
         MemBufferFree(td->buf);
+    if (td->output_buf)
+        MemBufferFree(td->output_buf);
 
     SCFree(td);
     return TM_ECODE_OK;

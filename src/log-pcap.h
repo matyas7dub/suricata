@@ -28,7 +28,22 @@
 #ifndef SURICATA_LOG_PCAP_H
 #define SURICATA_LOG_PCAP_H
 
+#include <rte_common.h>
+
 #define PCAP_OUTPUT_BUFFER_SIZE 65535
+#define PM_DUMMY_DATA_SIZE 48
+
+typedef struct __rte_packed_begin PmDummyData_ {
+    uint8_t overflow : 1;
+    uint8_t count : 7;
+    struct __rte_packed_begin {
+        uint16_t id;
+        uint8_t group;
+    } __rte_packed_end data [(PM_DUMMY_DATA_SIZE - 1)/3];
+    uint8_t padding[2];
+} __rte_packed_end PmDummyData;
+
+static_assert(sizeof(PmDummyData) == PM_DUMMY_DATA_SIZE, "Wrong PmDummyData alignment");
 
 void PcapLogRegister(void);
 void PcapLogProfileSetup(void);
