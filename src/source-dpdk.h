@@ -87,6 +87,41 @@ typedef struct DPDKIfaceConfig_ {
 #endif
 } DPDKIfaceConfig;
 
+#ifdef PM_OFFLOAD
+
+/* defined by the NIC FW */
+#define PM_DATA_SIZE 48
+
+/** All data is currently stuffed into PmData, because the dummy unit in the
+ *  testing NIC doesn't fill in the other fields of PmMetadata. In the future
+ *  PmData should be reduced down to the smaller struct. */
+typedef struct __rte_packed_begin PmData_ {
+    uint8_t overflow : 1;
+    uint8_t count : 7;
+    struct __rte_packed_begin {
+        uint16_t id;
+        uint8_t sgh;
+    } __rte_packed_end data [(PM_DATA_SIZE - 1)/3];
+    uint8_t padding[2]; // pad to 48 bytes total
+} __rte_packed_end PmData;
+
+static_assert(sizeof(PmData) == PM_DATA_SIZE, "Wrong PmData alignment");
+
+typedef struct __rte_packed_begin PmMetadata_ {
+    struct {
+        uint8_t flag : 1;
+        uint8_t marked : 1;
+        uint8_t reserved : 6;
+    } flags;
+    uint32_t markdata;
+    uint8_t reserved[3];
+    PmData data;
+} __rte_packed_end PmMetadata;
+
+static_assert(sizeof(PmMetadata) == PM_DATA_SIZE + 8, "Wrong PmMetadata alignment");
+
+#endif
+
 /**
  * \brief per packet DPDK vars
  *
