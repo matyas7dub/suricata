@@ -259,9 +259,15 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
              */
             if (((engine->ctx.pkt.mask & mask) == engine->ctx.pkt.mask) &&
                     (engine->ctx.pkt.hook == 0 || (p->pkt_hooks & BIT_U16(engine->ctx.pkt.hook)))) {
+                const uint32_t old_cnt = det_ctx->pmq.rule_id_array_cnt;
                 PREFILTER_PROFILING_START(det_ctx);
                 engine->cb.Prefilter(det_ctx, p, engine->pectx);
                 PREFILTER_PROFILING_END(det_ctx, engine->gid);
+                if (engine->is_mpm) {
+                    for (uint32_t i = old_cnt; i < det_ctx->pmq.rule_id_array_cnt; i++) {
+                        PacketMpmCandidateAdd(p, det_ctx->pmq.rule_id_array[i], sgh->id);
+                    }
+                }
             }
 
             if (engine->is_last)
@@ -279,9 +285,15 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_PF_PAYLOAD);
         PrefilterEngine *engine = sgh->payload_engines;
         while (1) {
+            const uint32_t old_cnt = det_ctx->pmq.rule_id_array_cnt;
             PREFILTER_PROFILING_START(det_ctx);
             engine->cb.Prefilter(det_ctx, p, engine->pectx);
             PREFILTER_PROFILING_END(det_ctx, engine->gid);
+            if (engine->is_mpm) {
+                for (uint32_t i = old_cnt; i < det_ctx->pmq.rule_id_array_cnt; i++) {
+                    PacketMpmCandidateAdd(p, det_ctx->pmq.rule_id_array[i], sgh->id);
+                }
+            }
 
             if (engine->is_last)
                 break;
@@ -300,9 +312,9 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
     SCReturn;
 }
 
-int PrefilterAppendEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh, PrefilterPktFn PrefilterFunc,
-        SignatureMask mask, enum SignatureHookPkt hook, void *pectx, void (*FreeFunc)(void *pectx),
-        const char *name)
+static int PrefilterAppendEngineInternal(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
+        PrefilterPktFn PrefilterFunc, SignatureMask mask, enum SignatureHookPkt hook, void *pectx,
+        void (*FreeFunc)(void *pectx), const char *name, const bool is_mpm)
 {
     if (sgh == NULL || PrefilterFunc == NULL || pectx == NULL)
         return -1;
@@ -320,6 +332,7 @@ int PrefilterAppendEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh, PrefilterP
     e->Free = FreeFunc;
     e->pkt_mask = mask;
     e->pkt_hook = hook;
+    e->is_mpm = is_mpm;
 
     if (sgh->init->pkt_engines == NULL) {
         sgh->init->pkt_engines = e;
@@ -339,6 +352,22 @@ int PrefilterAppendEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh, PrefilterP
     return 0;
 }
 
+int PrefilterAppendEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh, PrefilterPktFn PrefilterFunc,
+        SignatureMask mask, enum SignatureHookPkt hook, void *pectx, void (*FreeFunc)(void *pectx),
+        const char *name)
+{
+    return PrefilterAppendEngineInternal(de_ctx, sgh, PrefilterFunc, mask, hook, pectx, FreeFunc,
+            name, false);
+}
+
+int PrefilterAppendMpmEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
+        PrefilterPktFn PrefilterFunc, SignatureMask mask, enum SignatureHookPkt hook, void *pectx,
+        void (*FreeFunc)(void *pectx), const char *name)
+{
+    return PrefilterAppendEngineInternal(de_ctx, sgh, PrefilterFunc, mask, hook, pectx, FreeFunc,
+            name, true);
+}
+
 int PrefilterAppendPayloadEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
         PrefilterPktFn PrefilterFunc, void *pectx, void (*FreeFunc)(void *pectx), const char *name)
 {
@@ -353,6 +382,7 @@ int PrefilterAppendPayloadEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
     e->Prefilter = PrefilterFunc;
     e->pectx = pectx;
     e->Free = FreeFunc;
+    e->is_mpm = true;
 
     if (sgh->init->payload_engines == NULL) {
         sgh->init->payload_engines = e;
@@ -1295,6 +1325,7 @@ int PrefilterSetupRuleGroup(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterEngine *e = sgh->pkt_engines;
         for (el = sgh->init->pkt_engines ; el != NULL; el = el->next) {
             e->local_id = el->id;
+            e->is_mpm = el->is_mpm;
             e->cb.Prefilter = el->Prefilter;
             e->ctx.pkt.mask = el->pkt_mask;
             // TODO right now we represent the hook in a u8 in the prefilter engine for space
@@ -1324,6 +1355,7 @@ int PrefilterSetupRuleGroup(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterEngine *e = sgh->payload_engines;
         for (el = sgh->init->payload_engines ; el != NULL; el = el->next) {
             e->local_id = el->id;
+            e->is_mpm = el->is_mpm;
             e->cb.Prefilter = el->Prefilter;
             e->ctx.pkt.mask = el->pkt_mask;
             // TODO right now we represent the hook in a u8 in the prefilter engine for space
@@ -1832,7 +1864,7 @@ int PrefilterGenericMpmPktRegister(DetectEngineCtx *de_ctx, SigGroupHead *sgh, M
     pectx->transforms = &mpm_reg->transforms;
 
     enum SignatureHookPkt hook = SIGNATURE_HOOK_PKT_NOT_SET; // TODO review
-    int r = PrefilterAppendEngine(
+    int r = PrefilterAppendMpmEngine(
             de_ctx, sgh, PrefilterMpmPkt, 0, hook, pectx, PrefilterMpmPktFree, mpm_reg->pname);
     if (r != 0) {
         SCFree(pectx);

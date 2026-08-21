@@ -60,6 +60,9 @@ void Prefilter(DetectEngineThreadCtx *, const SigGroupHead *, Packet *p, const u
 int PrefilterAppendEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh, PrefilterPktFn PrefilterFunc,
         SignatureMask mask, enum SignatureHookPkt hook, void *pectx, void (*FreeFunc)(void *pectx),
         const char *name);
+int PrefilterAppendMpmEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
+        PrefilterPktFn PrefilterFunc, SignatureMask mask, enum SignatureHookPkt hook, void *pectx,
+        void (*FreeFunc)(void *pectx), const char *name);
 
 void PrefilterPostRuleMatch(
         DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *p, Flow *f);

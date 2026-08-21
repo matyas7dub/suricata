@@ -525,19 +525,23 @@ static int PcapLogBufferWrite(MemBuffer **buffer_ptr, const uint8_t *data, const
     return 0;
 }
 
-static int PcapLogPrepareOutput(PcapLogThreadData *td, const Packet *p, const uint8_t *data,
-        const size_t data_len, const uint8_t **output, size_t *output_len)
+static int PcapLogPrepareOutput(PcapLogThreadData *td, const uint8_t *data,
+        const PacketMpmCandidates *candidates, const size_t data_len, const uint8_t **output,
+        size_t *output_len)
 {
     PmDummyData dummy_data = pm_dummy_data;
+    const PacketMpmCandidates empty_candidates = { 0 };
+    if (candidates == NULL)
+        candidates = &empty_candidates;
     const size_t max_signatures = sizeof(dummy_data.data) / sizeof(dummy_data.data[0]);
-    const size_t signature_count = MIN((size_t)p->alerts.cnt, max_signatures);
+    const size_t signature_count = MIN((size_t)candidates->count, max_signatures);
 
     dummy_data.count = (uint8_t)signature_count;
-    dummy_data.overflow = p->alerts.cnt > max_signatures;
+    dummy_data.overflow = candidates->overflow || candidates->count > max_signatures;
     for (size_t i = 0; i < signature_count; i++) {
-        const PacketAlert *alert = &p->alerts.alerts[i];
-        dummy_data.data[i].id = (uint16_t)alert->s->id;
-        dummy_data.data[i].group = (uint8_t)alert->s->gid;
+        const PacketMpmCandidate *candidate = &candidates->data[i];
+        dummy_data.data[i].id = candidate->id;
+        dummy_data.data[i].sgh = candidate->sgh;
     }
 
     MemBufferReset(td->output_buf);
@@ -552,8 +556,8 @@ static int PcapLogPrepareOutput(PcapLogThreadData *td, const Packet *p, const ui
     return 0;
 }
 
-static inline int PcapWrite(ThreadVars *tv, PcapLogThreadData *td, const Packet *p,
-        const uint8_t *data, const size_t data_len)
+static inline int PcapWrite(ThreadVars *tv, PcapLogThreadData *td,
+        const PacketMpmCandidates *candidates, const uint8_t *data, const size_t data_len)
 {
     struct timeval current_dump;
     gettimeofday(&current_dump, NULL);
@@ -569,7 +573,7 @@ static inline int PcapWrite(ThreadVars *tv, PcapLogThreadData *td, const Packet 
         }
     }
 
-    if (PcapLogPrepareOutput(td, p, data, data_len, &output, &output_len) < 0) {
+    if (PcapLogPrepareOutput(td, data, candidates, data_len, &output, &output_len) < 0) {
         SCLogError("Failed to prepare packet data for PCAP output");
         return TM_ECODE_FAILED;
     }
@@ -644,7 +648,7 @@ static int PcapLogSegmentCallback(
                 pctx->td->buf, seg->pcap_hdr_storage->pkt_hdr, seg->pcap_hdr_storage->pktlen);
         MemBufferWriteRaw(pctx->td->buf, buf, buflen);
 
-        PcapWrite(pctx->tv, pctx->td, p, (uint8_t *)pctx->td->buf->buffer,
+        PcapWrite(pctx->tv, pctx->td, NULL, (uint8_t *)pctx->td->buf->buffer,
                 pctx->td->pcap_log->h->len);
     }
     return 1;
@@ -780,9 +784,9 @@ static int PcapLog(ThreadVars *tv, void *thread_data, const Packet *p)
 
     if (PacketIsTunnelChild(p)) {
         rp = p->root;
-        ret = PcapWrite(tv, td, p, GET_PKT_DATA(rp), data_len);
+        ret = PcapWrite(tv, td, NULL, GET_PKT_DATA(rp), data_len);
     } else {
-        ret = PcapWrite(tv, td, p, GET_PKT_DATA(p), data_len);
+        ret = PcapWrite(tv, td, &p->mpm_candidates, GET_PKT_DATA(p), data_len);
     }
     if (ret != TM_ECODE_OK) {
         PCAPLOG_PROFILE_END(pl->profile_write);

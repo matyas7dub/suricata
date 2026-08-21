@@ -296,6 +296,24 @@ typedef struct PacketAlerts_ {
     PacketAlert drop;
 } PacketAlerts;
 
+#define PACKET_MPM_CANDIDATE_MAX 15
+
+typedef struct PacketMpmCandidate_ {
+    uint16_t id;
+    uint8_t sgh;
+} PacketMpmCandidate;
+
+typedef struct PacketMpmCandidates_ {
+    uint8_t overflow : 1;
+    uint8_t count : 7;
+    PacketMpmCandidate data[PACKET_MPM_CANDIDATE_MAX];
+} PacketMpmCandidates;
+
+typedef struct Packet_ Packet;
+
+void PacketMpmCandidatesReset(Packet *p);
+void PacketMpmCandidateAdd(Packet *p, uint32_t id, uint32_t sgh);
+
 PacketAlert *PacketAlertCreate(void);
 void PacketAlertRecycle(PacketAlert *pa_array, uint16_t cnt);
 
@@ -635,6 +653,7 @@ typedef struct Packet_
     uint16_t livedev_dst_id;
 
     PacketAlerts alerts;
+    PacketMpmCandidates mpm_candidates;
 
     struct Host_ *host_src;
     struct Host_ *host_dst;

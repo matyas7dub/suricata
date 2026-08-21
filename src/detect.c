@@ -84,6 +84,8 @@ static void DetectRunInspectIPOnly(ThreadVars *tv, const DetectEngineCtx *de_ctx
         DetectEngineThreadCtx *det_ctx, Flow * const pflow, Packet * const p);
 static inline void DetectRunGetRuleGroup(const DetectEngineCtx *de_ctx,
         Packet * const p, Flow * const pflow, DetectRunScratchpad *scratch);
+static void DetectRunCaptureReverseMpm(const DetectEngineCtx *de_ctx,
+        DetectEngineThreadCtx *det_ctx, Packet *p, DetectRunScratchpad *scratch);
 static inline void DetectRunPrefilterPkt(ThreadVars *tv, const DetectEngineCtx *de_ctx,
         DetectEngineThreadCtx *det_ctx, Packet *p, DetectRunScratchpad *scratch);
 static inline uint8_t DetectRulePacketRules(ThreadVars *const tv,
@@ -213,6 +215,8 @@ static void DetectRun(ThreadVars *th_v,
 end:
     DetectRunPostRules(th_v, de_ctx, det_ctx, p, pflow, &scratch);
 
+    DetectRunCaptureReverseMpm(de_ctx, det_ctx, p, &scratch);
+
     DetectRunCleanup(det_ctx, p, pflow);
     SCReturn;
 }
@@ -291,8 +295,8 @@ static void DetectRunPostMatch(ThreadVars *tv,
  *
  *  \retval sgh the SigGroupHead or NULL if non applies to the packet
  */
-const SigGroupHead *SigMatchSignaturesGetSgh(const DetectEngineCtx *de_ctx,
-        const Packet *p)
+static const SigGroupHead *SigMatchSignaturesGetSghForDirection(const DetectEngineCtx *de_ctx,
+        const Packet *p, const bool toserver)
 {
     SCEnter();
     SigGroupHead *sgh = NULL;
@@ -315,7 +319,7 @@ const SigGroupHead *SigMatchSignaturesGetSgh(const DetectEngineCtx *de_ctx,
     }
 
     /* select the flow_gh */
-    const int dir = (p->flowflags & FLOW_PKT_TOCLIENT) == 0;
+    const int dir = toserver ? 1 : 0;
 
     int proto = PacketGetIPProto(p);
     if (proto == IPPROTO_TCP) {
@@ -342,6 +346,13 @@ const SigGroupHead *SigMatchSignaturesGetSgh(const DetectEngineCtx *de_ctx,
     }
 
     SCReturnPtr(sgh, "SigGroupHead");
+}
+
+const SigGroupHead *SigMatchSignaturesGetSgh(const DetectEngineCtx *de_ctx,
+        const Packet *p)
+{
+    const bool toserver = (p->flowflags & FLOW_PKT_TOCLIENT) == 0;
+    return SigMatchSignaturesGetSghForDirection(de_ctx, p, toserver);
 }
 
 static inline void DetectPrefilterCopyDeDup(
@@ -496,6 +507,50 @@ static inline void DetectRunGetRuleGroup(
     }
 
     scratch->sgh = sgh;
+}
+
+static const SigGroupHead *DetectRunGetReverseSgh(const DetectEngineCtx *de_ctx,
+        const Packet *p, const Flow *pflow, const bool current_toserver)
+{
+    const bool reverse_toserver = !current_toserver;
+
+    if (pflow && PacketGetIPProto(p) == pflow->proto) {
+        if (reverse_toserver && (pflow->flags & FLOW_SGH_TOSERVER))
+            return pflow->sgh_toserver;
+        if (!reverse_toserver && (pflow->flags & FLOW_SGH_TOCLIENT))
+            return pflow->sgh_toclient;
+    }
+
+    return SigMatchSignaturesGetSghForDirection(de_ctx, p, reverse_toserver);
+}
+
+static void DetectRunCaptureReverseMpm(const DetectEngineCtx *de_ctx,
+        DetectEngineThreadCtx *det_ctx, Packet *p, DetectRunScratchpad *scratch)
+{
+    if (!de_ctx->prefilter_reverse_sgh)
+        return;
+
+    const uint8_t direction = p->flowflags & (FLOW_PKT_TOSERVER | FLOW_PKT_TOCLIENT);
+    if (direction == 0 || direction == (FLOW_PKT_TOSERVER | FLOW_PKT_TOCLIENT))
+        return;
+
+    const bool current_toserver = (direction & FLOW_PKT_TOSERVER) != 0;
+    const SigGroupHead *reverse_sgh = DetectRunGetReverseSgh(
+            de_ctx, p, p->flow, current_toserver);
+    if (reverse_sgh == NULL || reverse_sgh == scratch->sgh)
+        return;
+
+    /* Reverse stream MPM can advance this temporary value. Restore the value
+     * from the normal detection pass before DetectRunCleanup updates the flow. */
+    const uint64_t raw_stream_progress = det_ctx->raw_stream_progress;
+    PMQ_RESET(&det_ctx->pmq);
+
+    PacketCreateMask(p, &p->sig_mask, scratch->alproto, scratch->app_decoder_events);
+    Prefilter(det_ctx, reverse_sgh, p, scratch->flow_flags, p->sig_mask);
+
+    PMQ_RESET(&det_ctx->pmq);
+    InspectionBufferClean(det_ctx);
+    det_ctx->raw_stream_progress = raw_stream_progress;
 }
 
 static void DetectRunInspectIPOnly(ThreadVars *tv, const DetectEngineCtx *de_ctx,
@@ -1036,6 +1091,7 @@ static DetectRunScratchpad DetectRunSetup(const DetectEngineCtx *de_ctx,
     det_ctx->raw_stream_progress = 0;
     det_ctx->match_array_cnt = 0;
     det_ctx->json_content_len = 0;
+    PacketMpmCandidatesReset(p);
 
     det_ctx->alert_queue_size = 0;
     p->alerts.drop.action = 0;

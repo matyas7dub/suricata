@@ -172,7 +172,7 @@ static int PrefilterSCTPChunkDataRegister(DetectEngineCtx *de_ctx, SigGroupHead 
     pectx->mpm_ctx = mpm_ctx;
     pectx->transforms = &mpm_reg->transforms;
 
-    return PrefilterAppendEngine(de_ctx, sgh, PrefilterMpmSCTPChunkDataPkt, 0,
+    return PrefilterAppendMpmEngine(de_ctx, sgh, PrefilterMpmSCTPChunkDataPkt, 0,
             SIGNATURE_HOOK_PKT_NOT_SET, pectx, PrefilterMpmSCTPChunkDataFree, mpm_reg->pname);
 }
 

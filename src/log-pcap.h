@@ -38,7 +38,7 @@ typedef struct __rte_packed_begin PmDummyData_ {
     uint8_t count : 7;
     struct __rte_packed_begin {
         uint16_t id;
-        uint8_t group;
+        uint8_t sgh;
     } __rte_packed_end data [(PM_DUMMY_DATA_SIZE - 1)/3];
     uint8_t padding[2];
 } __rte_packed_end PmDummyData;

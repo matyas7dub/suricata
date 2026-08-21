@@ -1870,6 +1870,7 @@ detect:
     # engines. "auto" also sets up prefilter engines for other keywords.
     # Use --list-keywords=all to see which keywords support prefiltering.
     default: mpm
+    reverse-sgh: no
 
   # the grouping values above control how many groups are created per
   # direction. Port priority setting forces that port to get its own group.

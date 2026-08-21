@@ -73,6 +73,7 @@ uint8_t PacketGetAction(const Packet *p)
 bool PacketInit(Packet *p)
 {
     SCSpinInit(&p->persistent.tunnel_lock, 0);
+    PacketMpmCandidatesReset(p);
     p->alerts.alerts = PacketAlertCreate();
     if (unlikely(p->alerts.alerts == NULL)) {
         return false;
@@ -80,6 +81,36 @@ bool PacketInit(Packet *p)
     p->livedev_id = 0;
     p->livedev_dst_id = 0;
     return true;
+}
+
+void PacketMpmCandidatesReset(Packet *p)
+{
+    p->mpm_candidates.count = 0;
+    p->mpm_candidates.overflow = 0;
+}
+
+void PacketMpmCandidateAdd(Packet *p, uint32_t id, uint32_t sgh)
+{
+    if (id > UINT16_MAX || sgh > UINT8_MAX) {
+        p->mpm_candidates.overflow = 1;
+        return;
+    }
+
+    for (uint8_t i = 0; i < p->mpm_candidates.count; i++) {
+        const PacketMpmCandidate *candidate = &p->mpm_candidates.data[i];
+        if (candidate->id == (uint16_t)id && candidate->sgh == (uint8_t)sgh)
+            return;
+    }
+
+    if (p->mpm_candidates.count == PACKET_MPM_CANDIDATE_MAX) {
+        p->mpm_candidates.overflow = 1;
+        return;
+    }
+
+    PacketMpmCandidate *candidate =
+            &p->mpm_candidates.data[p->mpm_candidates.count++];
+    candidate->id = (uint16_t)id;
+    candidate->sgh = (uint8_t)sgh;
 }
 
 void PacketReleaseRefs(Packet *p)
@@ -143,6 +174,7 @@ void PacketReinit(Packet *p)
     p->alerts.firewall_discarded = 0;
     p->alerts.suppressed = 0;
     p->alerts.drop.action = 0;
+    PacketMpmCandidatesReset(p);
     if (p->alerts.cnt > 0) {
         if (pflags & PKT_ALERT_CTX_USED)
             PacketAlertRecycle(p->alerts.alerts, p->alerts.cnt);

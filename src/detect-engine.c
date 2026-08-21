@@ -3290,6 +3290,11 @@ static int DetectEngineCtxLoadConf(DetectEngineCtx *de_ctx)
             break;
     }
 
+    de_ctx->prefilter_reverse_sgh = false;
+    int reverse_sgh = 0;
+    if (SCConfGetBool("detect.prefilter.reverse-sgh", &reverse_sgh) == 1)
+        de_ctx->prefilter_reverse_sgh = reverse_sgh != 0;
+
     return 0;
 }
 

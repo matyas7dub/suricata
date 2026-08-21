@@ -1118,6 +1118,8 @@ typedef struct DetectEngineCtx_ {
 
     /** are we using just mpm or also other prefilters */
     enum DetectEnginePrefilterSetting prefilter_setting;
+    /** run an additional MPM search against the opposite-direction SGH */
+    bool prefilter_reverse_sgh;
 
     HashListTable *dport_hash_table;
 
@@ -1587,6 +1589,7 @@ typedef void (*PrefilterTxFn)(DetectEngineThreadCtx *det_ctx, const void *pectx,
 
 typedef struct PrefilterEngineList_ {
     uint16_t id;
+    bool is_mpm;
 
     /** App Proto this engine applies to: only used with Tx Engines */
     AppProto alproto;
@@ -1624,6 +1627,7 @@ typedef struct PrefilterEngineList_ {
 
 typedef struct PrefilterEngine_ {
     uint16_t local_id;
+    bool is_mpm;
 
     /** App Proto this engine applies to: only used with Tx Engines */
     AppProto alproto;
