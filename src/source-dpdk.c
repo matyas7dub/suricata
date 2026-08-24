@@ -427,6 +427,20 @@ static inline Packet *PacketInitFromMbuf(DPDKThreadVars *ptv, struct rte_mbuf *m
 
     p->ts = TimeGet();
     p->dpdk_v.mbuf = mbuf;
+#ifdef PM_OFFLOAD
+    p->dpdk_v.pm_metadata = NULL;
+    const uint16_t *header_len =
+            RTE_MBUF_DYNFIELD(mbuf, suricata.hdr_len, uint16_t *);
+    if (*header_len == sizeof(PmMetadata) && (mbuf->ol_flags & suricata.hdr_vld_mask)) {
+        const uint16_t header_offset =
+                *RTE_MBUF_DYNFIELD(mbuf, suricata.hdr_offset, uint16_t *);
+        if ((size_t)header_offset <= mbuf->buf_len &&
+                sizeof(PmMetadata) <= (size_t)mbuf->buf_len - header_offset) {
+            p->dpdk_v.pm_metadata =
+                    (const PmMetadata *)((uint8_t *)mbuf->buf_addr + header_offset);
+        }
+    }
+#endif
     p->ReleasePacket = DPDKReleasePacket;
     p->dpdk_v.copy_mode = ptv->copy_mode;
     p->dpdk_v.out_port_id = ptv->out_port_id;

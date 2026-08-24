@@ -129,6 +129,9 @@ static_assert(sizeof(PmMetadata) == PM_DATA_SIZE + 8, "Wrong PmMetadata alignmen
  */
 typedef struct DPDKPacketVars_ {
     struct rte_mbuf *mbuf;
+#ifdef PM_OFFLOAD
+    const PmMetadata *pm_metadata;
+#endif
     uint16_t out_port_id;
     uint16_t out_queue_id;
     DpdkCopyModeEnum copy_mode;

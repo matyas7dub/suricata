@@ -89,6 +89,27 @@ static inline void QuickSortSigIntId(SigIntId *sids, uint32_t n)
     QuickSortSigIntId(l, (uint32_t)(sids + n - l));
 }
 
+#ifdef PM_OFFLOAD
+static inline bool PrefilterPmOffloadAvailable(const Packet *p)
+{
+    const PmMetadata *metadata = p->dpdk_v.pm_metadata;
+    return metadata != NULL && !metadata->data.overflow;
+}
+
+static void PrefilterPmOffload(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh,
+        const PmMetadata *metadata)
+{
+    for (uint8_t i = 0; i < metadata->data.count; i++) {
+        if (metadata->data.data[i].sgh != sgh)
+            continue;
+
+        const uint16_t id = metadata->data.data[i].id;
+        // TODO: translate to SID
+        PrefilterAddSids(&det_ctx->pmq, &id, 1);
+    }
+}
+#endif
+
 /**
  * \brief run prefilter engines on a transaction
  */
@@ -238,6 +259,11 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
         const uint8_t flags, const SignatureMask mask)
 {
     SCEnter();
+#ifdef PM_OFFLOAD
+    if (PrefilterPmOffloadAvailable(p)) {
+        PrefilterPmOffload(det_ctx, sgh, p->dpdk_v.pm_metadata);
+    }
+#endif
 #if 0
     /* TODO review this check */
     SCLogDebug("sgh %p frame_engines %p", sgh, sgh->frame_engines);
@@ -279,9 +305,16 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_PF_PAYLOAD);
         PrefilterEngine *engine = sgh->payload_engines;
         while (1) {
-            PREFILTER_PROFILING_START(det_ctx);
-            engine->cb.Prefilter(det_ctx, p, engine->pectx);
-            PREFILTER_PROFILING_END(det_ctx, engine->gid);
+#ifdef PM_OFFLOAD
+            const bool skip = engine->pm_offloadable && PrefilterPmOffloadAvailable(p);
+#else
+            const bool skip = false;
+#endif
+            if (!skip) {
+                PREFILTER_PROFILING_START(det_ctx);
+                engine->cb.Prefilter(det_ctx, p, engine->pectx);
+                PREFILTER_PROFILING_END(det_ctx, engine->gid);
+            }
 
             if (engine->is_last)
                 break;
@@ -340,7 +373,8 @@ int PrefilterAppendEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh, PrefilterP
 }
 
 int PrefilterAppendPayloadEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
-        PrefilterPktFn PrefilterFunc, void *pectx, void (*FreeFunc)(void *pectx), const char *name)
+        PrefilterPktFn PrefilterFunc, void *pectx, void (*FreeFunc)(void *pectx), const char *name,
+        const bool pm_offloadable)
 {
     if (sgh == NULL || PrefilterFunc == NULL || pectx == NULL)
         return -1;
@@ -353,6 +387,7 @@ int PrefilterAppendPayloadEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
     e->Prefilter = PrefilterFunc;
     e->pectx = pectx;
     e->Free = FreeFunc;
+    e->pm_offloadable = pm_offloadable;
 
     if (sgh->init->payload_engines == NULL) {
         sgh->init->payload_engines = e;
@@ -1330,6 +1365,7 @@ int PrefilterSetupRuleGroup(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
             // reasons.
             BUG_ON(el->pkt_hook >= 8);
             e->ctx.pkt.hook = (uint8_t)el->pkt_hook;
+            e->pm_offloadable = el->pm_offloadable;
             e->pectx = el->pectx;
             el->pectx = NULL; // e now owns the ctx
             e->gid = el->gid;

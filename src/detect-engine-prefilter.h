@@ -65,7 +65,8 @@ void PrefilterPostRuleMatch(
         DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *p, Flow *f);
 
 int PrefilterAppendPayloadEngine(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
-        PrefilterPktFn PrefilterFunc, void *pectx, void (*FreeFunc)(void *pectx), const char *name);
+        PrefilterPktFn PrefilterFunc, void *pectx, void (*FreeFunc)(void *pectx), const char *name,
+        bool pm_offloadable);
 int PrefilterAppendTxEngineSubState(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
         PrefilterTxFn PrefilterTxFunc, AppProto alproto, uint8_t sub_state,
         const int8_t tx_min_progress, void *pectx, void (*FreeFunc)(void *pectx), const char *name);

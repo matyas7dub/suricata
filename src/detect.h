@@ -1599,6 +1599,7 @@ typedef struct PrefilterEngineList_ {
     SignatureMask pkt_mask; /**< mask for pkt engines */
 
     uint8_t sub_state;
+    bool pm_offloadable;
 
     enum SignatureHookPkt pkt_hook;
 
@@ -1644,6 +1645,7 @@ typedef struct PrefilterEngine_ {
 
     bool is_last;
     bool is_last_for_progress;
+    bool pm_offloadable;
 
     /** Context for matching. Might be MpmCtx for MPM engines, other ctx'
      *  for other engines. */
