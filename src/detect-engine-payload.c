@@ -49,6 +49,7 @@
 #include "util-validate.h"
 #include "util-profiling.h"
 #include "util-mpm-ac.h"
+#include "util-mpm-hs.h"
 
 struct StreamMpmData {
     DetectEngineThreadCtx *det_ctx;
@@ -113,6 +114,22 @@ int PrefilterPktStreamRegister(DetectEngineCtx *de_ctx,
             PrefilterPktStream, mpm_ctx, NULL, "stream", false);
 }
 
+#ifdef PM_OFFLOAD
+static void PrefilterPktPayloadMapRegister(SigGroupHead *sgh, const MpmCtx *mpm_ctx)
+{
+    if (mpm_ctx->mpm_type != MPM_HS)
+        return;
+
+    if (sgh->pm_map == NULL) {
+        sgh->pm_map = SCCalloc(1, sizeof(*sgh->pm_map));
+        if (sgh->pm_map == NULL)
+            FatalError("failed to allocate SGH PM offload map");
+    }
+
+    PmOffloadMapPopulate(sgh->pm_map, mpm_ctx);
+}
+#endif
+
 static void PrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
         Packet *p, const void *pectx)
 {
@@ -132,6 +149,9 @@ static void PrefilterPktPayload(DetectEngineThreadCtx *det_ctx,
 int PrefilterPktPayloadRegister(DetectEngineCtx *de_ctx,
         SigGroupHead *sgh, MpmCtx *mpm_ctx)
 {
+#ifdef PM_OFFLOAD
+    PrefilterPktPayloadMapRegister(sgh, mpm_ctx);
+#endif
     return PrefilterAppendPayloadEngine(de_ctx, sgh,
             PrefilterPktPayload, mpm_ctx, NULL, "payload", true);
 }

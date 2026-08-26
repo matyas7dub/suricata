@@ -47,6 +47,42 @@
 MpmTableElmt mpm_table[MPM_TABLE_SIZE];
 uint8_t mpm_default_matcher;
 
+#ifdef PM_OFFLOAD
+static void PmOffloadMapEnsureEntries(PmOffloadMap *map)
+{
+    if (map->entries != NULL)
+        return;
+
+    map->entries = SCCalloc((size_t)UINT16_MAX + 1, sizeof(*map->entries));
+    if (map->entries == NULL)
+        FatalError("failed to allocate PM offload map");
+}
+
+uint32_t PmOffloadMapAdd(PmOffloadMap *map, const SigIntId *sids, uint32_t sids_count)
+{
+    if (map->count >= (uint32_t)UINT16_MAX + 1) {
+        FatalError("too many pattern match offload entries in an SGH");
+    }
+
+    PmOffloadMapEnsureEntries(map);
+
+    const uint32_t index = map->count++;
+    map->entries[index].sids = sids;
+    map->entries[index].sids_count = sids_count;
+    return index;
+}
+
+void PmOffloadMapFree(PmOffloadMap *map)
+{
+    if (map == NULL)
+        return;
+
+    SCFree(map->entries);
+    map->entries = NULL;
+    map->count = 0;
+}
+#endif
+
 /**
  * \brief Register a new Mpm Context.
  *

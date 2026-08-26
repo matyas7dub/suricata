@@ -2341,3 +2341,31 @@ static void SCHSRegisterTests(void)
 }
 #endif /* UNITTESTS */
 #endif /* BUILD_HYPERSCAN */
+
+#ifdef PM_OFFLOAD
+void PmOffloadMapPopulate(PmOffloadMap *map, const MpmCtx *mpm_ctx)
+{
+#ifdef BUILD_HYPERSCAN
+    const SCHSCtx *ctx = (const SCHSCtx *)mpm_ctx->ctx;
+    if (ctx == NULL)
+        return;
+
+    if (ctx->init_hash != NULL) {
+        for (uint32_t i = 0; i < INIT_HASH_SIZE; i++) {
+            for (const SCHSPattern *p = ctx->init_hash[i]; p != NULL; p = p->next) {
+                (void)PmOffloadMapAdd(map, p->sids, p->sids_size);
+            }
+        }
+    } else if (ctx->pattern_db != NULL) {
+        const PatternDatabase *db = ctx->pattern_db;
+        for (uint32_t i = 0; i < db->pattern_cnt; i++) {
+            const SCHSPattern *p = db->parray[i];
+            (void)PmOffloadMapAdd(map, p->sids, p->sids_size);
+        }
+    }
+#else
+    (void)map;
+    (void)mpm_ctx;
+#endif
+}
+#endif

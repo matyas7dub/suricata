@@ -31,4 +31,8 @@ void MpmHSRegister(void);
 
 void MpmHSGlobalCleanup(void);
 
+#ifdef PM_OFFLOAD
+void PmOffloadMapPopulate(PmOffloadMap *, const MpmCtx *);
+#endif
+
 #endif /* SURICATA_UTIL_MPM_HS__H */

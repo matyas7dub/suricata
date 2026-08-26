@@ -2153,6 +2153,9 @@ int SigPrepareStage4(DetectEngineCtx *de_ctx)
     //SCLogInfo("sgh's %"PRIu32, de_ctx->sgh_array_cnt);
 
     uint32_t cnt = 0;
+#ifdef PM_OFFLOAD
+    uint32_t pm_sgh_cnt = 0;
+#endif
     for (uint32_t idx = 0; idx < de_ctx->sgh_array_cnt; idx++) {
         SigGroupHead *sgh = de_ctx->sgh_array[idx];
         if (sgh == NULL)
@@ -2164,6 +2167,16 @@ int SigPrepareStage4(DetectEngineCtx *de_ctx)
         SCLogDebug("filestore count %u", sgh->filestore_cnt);
 
         PrefilterSetupRuleGroup(de_ctx, sgh);
+
+#ifdef PM_OFFLOAD
+        if (sgh->pm_map != NULL) {
+            if (pm_sgh_cnt > UINT8_MAX) {
+                FatalError("too many signature groups for pattern match offload");
+            }
+            sgh->pm_sgh_id = (uint8_t)pm_sgh_cnt++;
+            SCLogDebug("assigned pm_sgh_id %u", sgh->pm_sgh_id);
+        }
+#endif
 
         sgh->id = idx;
         cnt++;

@@ -31,6 +31,21 @@ typedef struct PrefilterRuleStore_ PrefilterRuleStore;
 
 #define MPM_INIT_HASH_SIZE 65536
 
+#ifdef PM_OFFLOAD
+typedef struct PmOffloadMapEntry_ {
+    const SigIntId *sids;
+    uint32_t sids_count;
+} PmOffloadMapEntry;
+
+typedef struct PmOffloadMap_ {
+    PmOffloadMapEntry *entries;
+    uint32_t count;
+} PmOffloadMap;
+
+uint32_t PmOffloadMapAdd(PmOffloadMap *, const SigIntId *, uint32_t);
+void PmOffloadMapFree(PmOffloadMap *);
+#endif
+
 enum {
     MPM_NOTSET = 0,
 

@@ -173,6 +173,13 @@ void SigGroupHeadFree(const DetectEngineCtx *de_ctx, SigGroupHead *sgh)
     }
 
     PrefilterCleanupRuleGroup(de_ctx, sgh);
+#ifdef PM_OFFLOAD
+    if (sgh->pm_map != NULL) {
+        PmOffloadMapFree(sgh->pm_map);
+        SCFree(sgh->pm_map);
+        sgh->pm_map = NULL;
+    }
+#endif
     SCFree(sgh);
 }
 

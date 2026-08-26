@@ -90,22 +90,26 @@ static inline void QuickSortSigIntId(SigIntId *sids, uint32_t n)
 }
 
 #ifdef PM_OFFLOAD
-static inline bool PrefilterPmOffloadAvailable(const Packet *p)
+static inline bool PrefilterPmOffloadAvailable(const Packet *p, const SigGroupHead *sgh)
 {
     const PmMetadata *metadata = p->dpdk_v.pm_metadata;
-    return metadata != NULL && !metadata->data.overflow;
+    if (metadata == NULL || metadata->data.overflow || sgh->pm_map == NULL)
+        return false;
+    return true;
 }
 
 static void PrefilterPmOffload(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh,
         const PmMetadata *metadata)
 {
     for (uint8_t i = 0; i < metadata->data.count; i++) {
-        if (metadata->data.data[i].sgh != sgh)
+        if (metadata->data.data[i].sgh != sgh->pm_sgh_id)
             continue;
 
         const uint16_t id = metadata->data.data[i].id;
-        // TODO: translate to SID
-        PrefilterAddSids(&det_ctx->pmq, &id, 1);
+        BUG_ON(id >= sgh->pm_map->count);
+
+        const PmOffloadMapEntry *entry = &sgh->pm_map->entries[id];
+        PrefilterAddSids(&det_ctx->pmq, entry->sids, entry->sids_count);
     }
 }
 #endif
@@ -260,7 +264,7 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
 {
     SCEnter();
 #ifdef PM_OFFLOAD
-    if (PrefilterPmOffloadAvailable(p)) {
+    if (PrefilterPmOffloadAvailable(p, sgh)) {
         PrefilterPmOffload(det_ctx, sgh, p->dpdk_v.pm_metadata);
     }
 #endif
@@ -306,7 +310,7 @@ void Prefilter(DetectEngineThreadCtx *det_ctx, const SigGroupHead *sgh, Packet *
         PrefilterEngine *engine = sgh->payload_engines;
         while (1) {
 #ifdef PM_OFFLOAD
-            const bool skip = engine->pm_offloadable && PrefilterPmOffloadAvailable(p);
+            const bool skip = engine->pm_offloadable && PrefilterPmOffloadAvailable(p, sgh);
 #else
             const bool skip = false;
 #endif

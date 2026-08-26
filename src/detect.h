@@ -1702,6 +1702,11 @@ typedef struct SigGroupHead_ {
 
     uint32_t id; /**< unique id used to index sgh_array for stats */
 
+#ifdef PM_OFFLOAD
+    uint8_t pm_sgh_id;
+    PmOffloadMap *pm_map;
+#endif
+
     PrefilterEngine *pkt_engines;
     PrefilterEngine *payload_engines;
     PrefilterEngine *tx_engines;
