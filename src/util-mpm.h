@@ -42,8 +42,15 @@ typedef struct PmOffloadMap_ {
     uint32_t count;
 } PmOffloadMap;
 
+typedef struct PmOffloadPair_ {
+    const struct SCHSPattern_ *pattern;
+    uint16_t map_index;
+    struct PmOffloadPair_ *next;
+} PmOffloadPair;
+
 uint32_t PmOffloadMapAdd(PmOffloadMap *, const SigIntId *, uint32_t);
 void PmOffloadMapFree(PmOffloadMap *);
+void PmOffloadPairFree(PmOffloadPair **);
 #endif
 
 enum {

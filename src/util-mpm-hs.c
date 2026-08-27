@@ -2343,29 +2343,48 @@ static void SCHSRegisterTests(void)
 #endif /* BUILD_HYPERSCAN */
 
 #ifdef PM_OFFLOAD
-void PmOffloadMapPopulate(PmOffloadMap *map, const MpmCtx *mpm_ctx)
+#ifdef BUILD_HYPERSCAN
+static void PmOffloadMapRegisterPair(PmOffloadMap *map, PmOffloadPair **pairs,
+        const SCHSPattern *pattern)
+{
+    const uint32_t map_index = PmOffloadMapAdd(map, pattern->sids, pattern->sids_size);
+    PmOffloadPair *entry = SCCalloc(1, sizeof(*entry));
+    if (entry == NULL)
+        FatalError("failed to allocate PM offload pair entry");
+
+    entry->pattern = pattern;
+    entry->map_index = (uint16_t)map_index;
+    entry->next = *pairs;
+    *pairs = entry;
+}
+#endif
+
+PmOffloadPair *PmOffloadMapPopulate(PmOffloadMap *map, const MpmCtx *mpm_ctx)
 {
 #ifdef BUILD_HYPERSCAN
+    PmOffloadPair *pairs = NULL;
     const SCHSCtx *ctx = (const SCHSCtx *)mpm_ctx->ctx;
     if (ctx == NULL)
-        return;
+        return NULL;
 
     if (ctx->init_hash != NULL) {
         for (uint32_t i = 0; i < INIT_HASH_SIZE; i++) {
             for (const SCHSPattern *p = ctx->init_hash[i]; p != NULL; p = p->next) {
-                (void)PmOffloadMapAdd(map, p->sids, p->sids_size);
+                PmOffloadMapRegisterPair(map, &pairs, p);
             }
         }
     } else if (ctx->pattern_db != NULL) {
         const PatternDatabase *db = ctx->pattern_db;
         for (uint32_t i = 0; i < db->pattern_cnt; i++) {
             const SCHSPattern *p = db->parray[i];
-            (void)PmOffloadMapAdd(map, p->sids, p->sids_size);
+            PmOffloadMapRegisterPair(map, &pairs, p);
         }
     }
+    return pairs;
 #else
     (void)map;
     (void)mpm_ctx;
+    return NULL;
 #endif
 }
 #endif

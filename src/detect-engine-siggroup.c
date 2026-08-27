@@ -179,6 +179,7 @@ void SigGroupHeadFree(const DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         SCFree(sgh->pm_map);
         sgh->pm_map = NULL;
     }
+    PmOffloadPairFree(&sgh->pm_pairs);
 #endif
     SCFree(sgh);
 }

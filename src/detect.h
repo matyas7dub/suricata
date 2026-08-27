@@ -1705,6 +1705,7 @@ typedef struct SigGroupHead_ {
 #ifdef PM_OFFLOAD
     uint8_t pm_sgh_id;
     PmOffloadMap *pm_map;
+    PmOffloadPair *pm_pairs;
 #endif
 
     PrefilterEngine *pkt_engines;

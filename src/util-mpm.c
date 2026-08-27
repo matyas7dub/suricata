@@ -81,6 +81,20 @@ void PmOffloadMapFree(PmOffloadMap *map)
     map->entries = NULL;
     map->count = 0;
 }
+
+void PmOffloadPairFree(PmOffloadPair **pairs)
+{
+    if (pairs == NULL)
+        return;
+
+    PmOffloadPair *pair = *pairs;
+    while (pair != NULL) {
+        PmOffloadPair *next = pair->next;
+        SCFree(pair);
+        pair = next;
+    }
+    *pairs = NULL;
+}
 #endif
 
 /**

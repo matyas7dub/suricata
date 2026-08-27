@@ -126,7 +126,18 @@ static void PrefilterPktPayloadMapRegister(SigGroupHead *sgh, const MpmCtx *mpm_
             FatalError("failed to allocate SGH PM offload map");
     }
 
-    PmOffloadMapPopulate(sgh->pm_map, mpm_ctx);
+    PmOffloadPair *pairs = PmOffloadMapPopulate(sgh->pm_map, mpm_ctx);
+    if (pairs == NULL)
+        return;
+
+    if (sgh->pm_pairs == NULL) {
+        sgh->pm_pairs = pairs;
+    } else {
+        PmOffloadPair *tail = sgh->pm_pairs;
+        while (tail->next != NULL)
+            tail = tail->next;
+        tail->next = pairs;
+    }
 }
 #endif
 
