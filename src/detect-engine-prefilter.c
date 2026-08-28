@@ -102,6 +102,9 @@ static void PrefilterPmOffload(DetectEngineThreadCtx *det_ctx, const SigGroupHea
         const PmMetadata *metadata)
 {
     for (uint8_t i = 0; i < metadata->data.count; i++) {
+// disabled for use with dummy unit
+// for simplicity's sake the generated PCAP already has (truncated) SigIntIds in the metadata
+#if (0)
         if (metadata->data.data[i].sgh != sgh->pm_sgh_id)
             continue;
 
@@ -110,6 +113,13 @@ static void PrefilterPmOffload(DetectEngineThreadCtx *det_ctx, const SigGroupHea
 
         const PmOffloadMapEntry *entry = &sgh->pm_map->entries[id];
         PrefilterAddSids(&det_ctx->pmq, entry->sids, entry->sids_count);
+#else
+        if ((uint32_t)metadata->data.data[i].sgh != sgh->id)
+            continue;
+
+        uint32_t sid = (uint32_t)metadata->data.data[i].id;
+        PrefilterAddSids(&det_ctx->pmq, &sid, 1);
+#endif
     }
 }
 #endif
