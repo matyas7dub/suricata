@@ -102,6 +102,9 @@ TmEcode NoDPDKSupportExit(ThreadVars *tv, const void *initdata, void **data)
 #define MINIMUM_SLEEP_TIME_US        1U
 #define STANDARD_SLEEP_TIME_US       100U
 #define MAX_EPOLL_TIMEOUT_MS         500U
+
+// max rate (per second) at which DPDK stats are synced
+#define DPDK_STATS_SYNC_RATE 5
 static rte_spinlock_t intr_lock[RTE_MAX_ETHPORTS];
 
 /**
@@ -552,14 +555,19 @@ static void HandleShutdown(DPDKThreadVars *ptv)
     }
 }
 
-static void PeriodicDPDKDumpCounters(DPDKThreadVars *ptv)
+/**
+ *  \brief Dump DPDK counters and sync them to the stats API, at most
+ *         DPDK_STATS_SYNC_RATE times per second per thread.
+ */
+static void PeriodicDPDKSyncCounters(ThreadVars *tv, DPDKThreadVars *ptv)
 {
-    static thread_local SCTime_t last_dump = { 0 };
-    SCTime_t current_time = TimeGet();
-    /* Trigger one dump of stats every second */
-    if (current_time.secs != last_dump.secs) {
+    static thread_local SCTime_t next_sync = SCTIME_INITIALIZER;
+    SCTime_t now = TimeGet();
+
+    if (SCTIME_CMP_GTE(now, next_sync)) {
         DPDKDumpCounters(ptv);
-        last_dump = current_time;
+        StatsSyncCounters(&tv->stats);
+        next_sync = SCTIME_ADD_USECS(now, 1000000 / DPDK_STATS_SYNC_RATE);
     }
 }
 
@@ -607,8 +615,7 @@ static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
             }
         }
 
-        PeriodicDPDKDumpCounters(ptv);
-        StatsSyncCountersIfSignalled(&tv->stats);
+        PeriodicDPDKSyncCounters(tv, ptv);
     }
 
     SCReturnInt(TM_ECODE_OK);
