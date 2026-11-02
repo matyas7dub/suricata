@@ -693,12 +693,21 @@ static uint16_t StatsRegisterQualifiedCounter(const char *name, StatsPublicThrea
 }
 
 /**
- * \brief The output interface for the Stats API
+ * \brief Rebuild the stats tables (totals and per thread) from the freshest
+ *        values each thread has synced to its public context.
+ *
+ *        This does not invoke the stats loggers, so it can be safely used to
+ *        refresh the stats table on demand, e.g. when statistics are polled
+ *        over the unix socket.
+ *
+ * \note must be called with stats_table_mutex held
+ *
+ * \retval 1  ok
+ * \retval -1 error
  */
-static int StatsOutput(ThreadVars *tv)
+static int StatsUpdateTables(void)
 {
     const StatsThreadStore *sts = NULL;
-    void *td = stats_thread_data;
 
     if (counters_global_id == 0)
         return -1;
@@ -900,9 +909,24 @@ static int StatsOutput(ThreadVars *tv)
         }
     }
 
+    return 1;
+}
+
+/**
+ * \brief The output interface for the Stats API.
+ *        Rebuilds the stats tables and invokes the registered stats loggers
+ *
+ * \note must be called with stats_table_mutex held
+ */
+static int StatsOutput(ThreadVars *tv)
+{
+    int r = StatsUpdateTables();
+    if (r != 1)
+        return r;
+
     /* invoke logger(s) */
     if (stats_loggers_active) {
-        OutputStatsLog(tv, td, &stats_table);
+        OutputStatsLog(tv, stats_thread_data, &stats_table);
     }
     return 1;
 }
@@ -921,6 +945,8 @@ TmEcode StatsOutputCounterSocket(json_t *cmd,
         message = json_string("stats are disabled in the config");
     } else {
         SCMutexLock(&stats_table_mutex);
+        /* refresh stats tables to make the socket data somewhat realtime */
+        StatsUpdateTables();
         if (stats_table.start_time == 0) {
             r = TM_ECODE_FAILED;
             message = json_string("stats not yet synchronized");
