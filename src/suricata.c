@@ -57,6 +57,7 @@
 #include "detect-engine-tag.h"
 #include "detect-engine-threshold.h"
 #include "detect-fast-pattern.h"
+#include "detect-content.h"
 
 #include "datasets.h"
 
@@ -2599,17 +2600,159 @@ static void SetupDelayedDetect(SCInstance *suri)
 
 }
 
+static void DumpSignaturesCsvWriteContent(FILE *fp, const DetectContentData *cd)
+{
+    for (uint16_t i = 0; i < cd->content_len; i++) {
+        uint8_t c = cd->content[i];
+        if (c == '"')
+            fprintf(fp, "\"\"");
+        else if (c == '\\')
+            fprintf(fp, "\\\\");
+        else if (c >= 0x20 && c <= 0x7e)
+            fputc(c, fp);
+        else
+            fprintf(fp, "\\x%02x", c);
+    }
+}
+
+static void DumpSignaturesCsvContent(FILE *fp, Signature *s,
+        const char *buffer_name, const DetectContentData *cd)
+{
+    fprintf(fp, "%u,%s,\"", s->id, buffer_name);
+    DumpSignaturesCsvWriteContent(fp, cd);
+    fprintf(fp, "\",%u,%u,%d,%d,%s,%s,%s,%s,%s,%s\n", cd->depth, cd->offset,
+            cd->distance, cd->within,
+            (cd->flags & DETECT_CONTENT_NOCASE) ? "1" : "0",
+            (cd->flags & DETECT_CONTENT_NEGATED) ? "1" : "0",
+            (cd->flags & DETECT_CONTENT_FAST_PATTERN) ? "1" : "0",
+            (cd->flags & DETECT_CONTENT_RAWBYTES) ? "1" : "0",
+            (cd->flags & DETECT_CONTENT_STARTS_WITH) ? "1" : "0",
+            (cd->flags & DETECT_CONTENT_ENDS_WITH) ? "1" : "0");
+}
+
+static void DumpSignaturesCsvSmdArray(FILE *fp, Signature *s, const char *buffer_name,
+        const SigMatchData *smd)
+{
+    if (smd == NULL)
+        return;
+    for (; smd != NULL; smd++) {
+        if (smd->type == DETECT_CONTENT) {
+            DumpSignaturesCsvContent(fp, s, buffer_name, (DetectContentData *)smd->ctx);
+        }
+        if (smd->is_last)
+            break;
+    }
+}
+
+static void DumpSignaturesCsvSmlist(FILE *fp, Signature *s, const char *buffer_name,
+        const SigMatch *sm)
+{
+    for (; sm != NULL; sm = sm->next) {
+        if (sm->type == DETECT_CONTENT) {
+            DumpSignaturesCsvContent(fp, s, buffer_name, (DetectContentData *)sm->ctx);
+        }
+    }
+}
+
+static const char *BuiltinListName(int list)
+{
+    switch (list) {
+        case DETECT_SM_LIST_MATCH:
+            return "match";
+        case DETECT_SM_LIST_PMATCH:
+            return "payload";
+        case DETECT_SM_LIST_BASE64_DATA:
+            return "base64_data";
+        case DETECT_SM_LIST_POSTMATCH:
+            return "postmatch";
+        case DETECT_SM_LIST_TMATCH:
+            return "tmatch";
+        case DETECT_SM_LIST_SUPPRESS:
+            return "suppress";
+        case DETECT_SM_LIST_THRESHOLD:
+            return "threshold";
+        default:
+            return "unknown";
+    }
+}
+
+static void DumpSignaturesCsv(DetectEngineCtx *de_ctx)
+{
+    FILE *fp = fopen("signatures.csv", "w");
+    if (fp == NULL) {
+        SCLogError("failed to open signatures.csv");
+        return;
+    }
+
+    fprintf(fp,
+            "sid,buffer,content,depth,offset,distance,within,nocase,negate,fast_pattern,rawbytes,starts_with,ends_with\n");
+
+    for (Signature *s = de_ctx->sig_list; s != NULL; s = s->next) {
+        if (s->init_data != NULL) {
+            /* engine build didn't complete (or hasn't run yet): dump the
+             * pre-build state */
+            for (int list = 0; list < DETECT_SM_LIST_MAX; list++) {
+                const DetectBufferType *bt = DetectEngineBufferTypeGetById(de_ctx, list);
+                DumpSignaturesCsvSmlist(fp, s, bt ? bt->name : BuiltinListName(list),
+                        s->init_data->smlists[list]);
+            }
+            for (uint32_t i = 0; i < s->init_data->buffer_index; i++) {
+                SignatureInitDataBuffer *buf = &s->init_data->buffers[i];
+                const DetectBufferType *bt = DetectEngineBufferTypeGetById(de_ctx, (int)buf->id);
+                DumpSignaturesCsvSmlist(fp, s, bt ? bt->name : "unknown", buf->head);
+            }
+            continue;
+        }
+
+        for (int list = 0; list < DETECT_SM_LIST_MAX; list++) {
+            const DetectBufferType *bt = DetectEngineBufferTypeGetById(de_ctx, list);
+            DumpSignaturesCsvSmdArray(fp, s, bt ? bt->name : BuiltinListName(list),
+                    s->sm_arrays[list]);
+        }
+        const void *last_smd = NULL;
+        for (const DetectEngineAppInspectionEngine *e = s->app_inspect; e != NULL; e = e->next) {
+            if (e->smd == NULL || e->smd == last_smd)
+                continue;
+            last_smd = e->smd;
+            const DetectBufferType *bt = DetectEngineBufferTypeGetById(de_ctx, e->sm_list);
+            DumpSignaturesCsvSmdArray(fp, s, bt ? bt->name : "unknown", e->smd);
+        }
+        last_smd = NULL;
+        for (const DetectEnginePktInspectionEngine *e = s->pkt_inspect; e != NULL; e = e->next) {
+            if (e->smd == NULL || e->smd == last_smd)
+                continue;
+            last_smd = e->smd;
+            const DetectBufferType *bt = DetectEngineBufferTypeGetById(de_ctx, e->sm_list);
+            DumpSignaturesCsvSmdArray(fp, s, bt ? bt->name : "unknown", e->smd);
+        }
+        last_smd = NULL;
+        for (const DetectEngineFrameInspectionEngine *e = s->frame_inspect; e != NULL;
+                e = e->next) {
+            if (e->smd == NULL || e->smd == last_smd)
+                continue;
+            last_smd = e->smd;
+            const DetectBufferType *bt = DetectEngineBufferTypeGetById(de_ctx, e->sm_list);
+            DumpSignaturesCsvSmdArray(fp, s, bt ? bt->name : "unknown", e->smd);
+        }
+    }
+
+    fclose(fp);
+}
+
 static int LoadSignatures(DetectEngineCtx *de_ctx, SCInstance *suri)
 {
     de_ctx->firewall_rule_file_exclusive = suri->firewall_rule_file;
 
+    int ret = TM_ECODE_OK;
     if (SigLoadSignatures(de_ctx, suri->sig_file, suri->sig_file_exclusive) < 0) {
         SCLogError("Loading signatures failed.");
         if (de_ctx->failure_fatal)
-            return TM_ECODE_FAILED;
+            ret = TM_ECODE_FAILED;
     }
 
-    return TM_ECODE_OK;
+    DumpSignaturesCsv(de_ctx);
+
+    return ret;
 }
 
 static int ConfigGetCaptureValue(SCInstance *suri)
