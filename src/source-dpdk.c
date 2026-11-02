@@ -552,17 +552,6 @@ static void HandleShutdown(DPDKThreadVars *ptv)
     }
 }
 
-static void PeriodicDPDKDumpCounters(DPDKThreadVars *ptv)
-{
-    static thread_local SCTime_t last_dump = { 0 };
-    SCTime_t current_time = TimeGet();
-    /* Trigger one dump of stats every second */
-    if (current_time.secs != last_dump.secs) {
-        DPDKDumpCounters(ptv);
-        last_dump = current_time;
-    }
-}
-
 /**
  *  \brief Main DPDK reading Loop function
  */
@@ -607,8 +596,8 @@ static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
             }
         }
 
-        PeriodicDPDKDumpCounters(ptv);
-        StatsSyncCountersIfSignalled(&tv->stats);
+        DPDKDumpCounters(ptv);
+        StatsSyncCounters(&tv->stats);
     }
 
     SCReturnInt(TM_ECODE_OK);
